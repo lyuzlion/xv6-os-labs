@@ -1,64 +1,51 @@
 #include "kernel/types.h"
+#include "kernel/stat.h"
 #include "user/user.h"
 
-#define READ 0
-#define WRITE 1
-
-void primes(int pipefd[2]) {
-    close(pipefd[WRITE]);
-
-    int first_data, flg = 0, cur_data;
-
-    flg = (read(pipefd[READ], &first_data, sizeof(int)) == sizeof (int));
-
-    // printf("first_data: %d\n", first_data);
-
-    if (flg == 0) {
-        close(pipefd[READ]);
-        exit(0);
-    }
-
-    fprintf(1, "prime %d\n", first_data);
-
-    int right_pipefd[2];
-    pipe(right_pipefd);
-    // close(right_pipefd[READ]);
-
-    while (read(pipefd[READ], &cur_data, sizeof(int)) == sizeof(int)) {
-        if (cur_data % first_data != 0) {
-            write(right_pipefd[WRITE], &cur_data, sizeof(int));
-        }
-    }
-    close(pipefd[READ]);
-    close(right_pipefd[WRITE]);
-
+void dfs(int L[2]) { 
+    int p;
+    read(L[0], &p, sizeof(p));
+    
+    if(p == -1) exit(0);
+    printf("prime %d\n", p);
+    
+    int R[2]; 
+    pipe(R);
+    
     int pid = fork();
-    if (pid == 0) {
-        primes(right_pipefd);
+    if(pid == 0) {
+        close(R[1]);
+        close(L[0]);
+        dfs(R); 
     } else {
-        // close(right_pipefd[WRITE]);
+        close(R[0]); 
+        int buf;
+        while(read(L[0], &buf, sizeof(buf)) && buf != -1) {
+            if(buf % p != 0) // 埃筛，把p的倍数筛掉
+                write(R[1], &buf, sizeof(buf)); //让它的子进程继续处理
+        }
+        buf = -1;
+        write(R[1], &buf, sizeof(buf));
         wait(0);
     }
+    exit(0);
 }
 
-int main() {
-    int pipefd[2];
-    pipe(pipefd);
-
-    // close(pipefd[READ]); 一开始关闭过早，子进程 fork 后也是关闭的。
-
-    for (int i = 2; i <= 35; ++i) {
-        write(pipefd[WRITE], &i, sizeof(i));
-    }
-
+int main(int argc, char **argv) {
+    int p[2];
+    pipe(p);
+    
     int pid = fork();
-    if (pid == 0) {
-        primes(pipefd);
+    if(pid == 0) {
+        close(p[1]);  // 子进程，关闭写端
+        dfs(p);
+        exit(0);
     } else {
-        close(pipefd[WRITE]);
-        close(pipefd[READ]);
+        close(p[0]); // 父进程，关闭读端
+        for(int i = 2;i <= 35;i++) write(p[1], &i, sizeof(int));
+        int buf = -1;
+        write(p[1], &buf, sizeof(buf));
         wait(0);
+        exit(0);
     }
-
-    exit(0);
 }
