@@ -20,18 +20,19 @@ int main(int argc, char *argv[]){
             buffer[cur] = 0;
             arg_list[arg_cnt++] = p;
 
-            p = buffer;
-            cur = 0;
+            p = buffer; 
+            cur = 0; // 清空缓冲区
             arg_list[arg_cnt] = 0;
             arg_cnt = argc - 1; // 记得要保留命令行里传入的参数
 
             if(fork() == 0){
                 exec(argv[1], arg_list);
+                // fork 防止子进程崩溃对xargs产生影响，并且能够节省缓冲区
             }
             wait(0);
         } else if(c == ' ') {
             buffer[cur++] = 0;
-            arg_list[arg_cnt++] = p;
+            arg_list[arg_cnt++] = p; // 向 arg list 中存上一个参数
             p = &buffer[cur];
         } else {
             buffer[cur++] = c;
