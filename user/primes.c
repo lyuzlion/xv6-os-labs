@@ -1,5 +1,4 @@
 #include "kernel/types.h"
-#include "kernel/stat.h"
 #include "user/user.h"
 
 void dfs(int L[2]) { 
@@ -13,11 +12,11 @@ void dfs(int L[2]) {
     pipe(R);
     
     int pid = fork();
-    if(pid == 0) {
+    if(pid == 0) { // 由子进程执行递归
         close(R[1]);
         close(L[0]);
         dfs(R); 
-    } else {
+    } else { // 由父进程向子进程传递数据
         close(R[0]); 
         int buf;
         while(read(L[0], &buf, sizeof(buf)) && buf != -1) {
