@@ -29,11 +29,11 @@ int main(int argc, char *argv[]){
                 exec(argv[1], arg_list);
             }
             wait(0);
-        }else if(c == ' ') {
+        } else if(c == ' ') {
             buffer[cur++] = 0;
             arg_list[arg_cnt++] = p;
             p = &buffer[cur];
-        }else {
+        } else {
             buffer[cur++] = c;
         }
     }
