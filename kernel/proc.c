@@ -280,17 +280,17 @@ growproc(int n)
 int
 fork(void)
 {
-  int i, pid;
-  struct proc *np;
-  struct proc *p = myproc();
+  int i, pid; // pid定义为子进程id
+  struct proc *np; // 定义了一个指向 proc 结构体的指针 np，用于表示新创建的子进程
+  struct proc *p = myproc(); // 调用 myproc() 函数获取当前进程的指针 p。
 
   // Allocate process.
   if((np = allocproc()) == 0){
-    return -1;
+    return -1; // 用 allocproc() 函数尝试分配一个新的进程结构体。如果分配失败，返回 -1 表示错误。
   }
 
   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){ // 调用 uvmcopy 函数从『父进程的页表』复制『用户内存』到『子进程的页表』。如果复制失败，释放新分配的进程结构体并返回 -1。
     freeproc(np);
     release(&np->lock);
     return -1;
@@ -301,32 +301,32 @@ fork(void)
   np->mask = p->mask;
 
   // copy saved user registers.
-  *(np->trapframe) = *(p->trapframe);
+  *(np->trapframe) = *(p->trapframe); // 复制父进程的陷阱帧（保存的用户寄存器）到子进程。
 
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
 
   // increment reference counts on open file descriptors.
-  for(i = 0; i < NOFILE; i++)
+  for(i = 0; i < NOFILE; i++) // 历父进程的文件描述符数组，如果文件描述符有效，则调用 filedup 函数增加其引用计数，并将其赋值给子进程的文件描述符数组。
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
-  safestrcpy(np->name, p->name, sizeof(p->name));
+  safestrcpy(np->name, p->name, sizeof(p->name)); //安全地复制父进程的名称到子进程。
 
   pid = np->pid;
 
   release(&np->lock);
 
   acquire(&wait_lock);
-  np->parent = p;
+  np->parent = p; // 设置父子关系
   release(&wait_lock);
 
   acquire(&np->lock);
-  np->state = RUNNABLE;
+  np->state = RUNNABLE; // 设置子进程状态
   release(&np->lock);
 
-  return pid;
+  return pid; // 返回子进程的进程ID。
 }
 
 // Pass p's abandoned children to init.
