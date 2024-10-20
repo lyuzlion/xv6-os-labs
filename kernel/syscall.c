@@ -167,7 +167,8 @@ syscall(void)
 
   // M: get the system call number from the trapframe
   num = p->trapframe->a7;
-  
+  // num = * (int *) 0;
+
   // M: NELEM(syscalls) means the number of elements in the syscalls array
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     // Use num to lookup the system call function for num, call it,

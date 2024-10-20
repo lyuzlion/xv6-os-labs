@@ -685,7 +685,7 @@ procdump(void)
     if(p->state >= 0 && p->state < NELEM(states) && states[p->state])
       state = states[p->state];
     else
-      state = "???";
+      state = "?";
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
