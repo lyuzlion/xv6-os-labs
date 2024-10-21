@@ -132,7 +132,7 @@ found:
     release(&p->lock);
     return 0;
   }  
-  p->shared_page_ptr->pid = p->pid;
+  p->shared_page_ptr->pid = p->pid; // 保存的是进程p的数据
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -197,7 +197,7 @@ proc_pagetable(struct proc *p)
 
   // An empty page table.
   // M: return the virtual address of page table
-  pagetable = uvmcreate();
+  pagetable = uvmcreate(); // 调用 uvmcreate 创建一个新的空页表。如果创建失败，返回 0。
   if(pagetable == 0)
     return 0;
 
@@ -209,7 +209,7 @@ proc_pagetable(struct proc *p)
   if(mappages(pagetable, TRAMPOLINE, PGSIZE,
               (uint64)trampoline, PTE_R | PTE_X) < 0){
     uvmfree(pagetable, 0);
-    return 0;
+    return 0; // 使用 mappages 将陷阱代码映射到最高的用户虚拟地址 TRAMPOLINE。权限设置为只读和可执行 (PTE_R | PTE_X)。如果映射失败，释放页表并返回 0。
   }
 
   // map the trapframe page just below the trampoline page, for
@@ -224,8 +224,8 @@ proc_pagetable(struct proc *p)
   // M: the capacity page table is PGSIZE
   // M: PTE_R and PTE_U means read and user accessible
   if(mappages(pagetable, USYSCALL, PGSIZE, (uint64)p->shared_page_ptr, PTE_R | PTE_U) < 0){
-    // uvmfree(pagetable, 0);
-    // return 0;
+    // 使用 mappages 将用户系统调用页映射到 USYSCALL 地址。权限设置为可读和用户可访问 (PTE_R | PTE_U)。
+    // 如果映射失败，先解除陷阱代码页和陷阱帧页的映射，再释放页表并返回 0。
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
     uvmunmap(pagetable, TRAPFRAME, 1, 0);
     uvmfree(pagetable, 0);
