@@ -94,19 +94,24 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
 
   // M: the xv6 uses 3-level page table
   for(int level = 2; level > 0; level--) {
+
     // M: due to the linear mapping, the virtual address is the physical address
     // M: so we get a continuous virtual address also a continuous physical address
     pte_t *pte = &pagetable[PX(level, va)]; // M: means &(pagetable + PX(level, va))
+    
     if(*pte & PTE_V) {
       pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
+
       // M: alloc means whether we could allocate a needed page-table page
       if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
         return 0;
+
       memset(pagetable, 0, PGSIZE);
       *pte = PA2PTE(pagetable) | PTE_V;
     }
   }
+  
   return &pagetable[PX(0, va)];
 }
 
@@ -296,10 +301,15 @@ freewalk(pagetable_t pagetable)
   for(int i = 0; i < 512; i++){
     // M: *(pagetable + i) is the PTE
     pte_t pte = pagetable[i];
+
+    // M: if R/W/X are all 0, that means 
+    // M: this PTE points to a lower-level page table
     if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
       // this PTE points to a lower-level page table.
       uint64 child = PTE2PA(pte);
       freewalk((pagetable_t)child);
+
+      // M: free the page table page
       pagetable[i] = 0;
     } else if(pte & PTE_V){
       panic("freewalk: leaf");
@@ -470,6 +480,7 @@ static int depth = 0;
 // M: recursively print the page table
 void
 vmprint(pagetable_t pagetable) {
+
   // M: print the addr of pagetable
   if (depth == 0) {
     printf("page table %p\n", (uint64)pagetable);
@@ -477,9 +488,12 @@ vmprint(pagetable_t pagetable) {
   }
 
   // M: start from 0, skip the first pte
-  for (int i = 1; i < 512; ++i) {
+  // M: 512 ptes in a page table
+  for (int i = 0; i < 512; ++i) {
+
     pte_t pte = pagetable[i];
 
+    // M: if the current pte is valid
     if (pte & PTE_V) {
       for (int j = 0; j <= depth; ++j) {
         printf("..");
@@ -488,8 +502,12 @@ vmprint(pagetable_t pagetable) {
       // printf("%d: pte %p pa %p\n", i, pte, PTE2PA(pte));
     }
 
+    // M: the pte is not R/W/X, and it is valid
+    // M: this means the pte points to a deeper level page table
     if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
       depth++;
+
+      // M: get the physical address of the child page table
       uint64 child_pa = PTE2PA(pte);
       // M: recursive call, to print the multi-level page table
       vmprint((pagetable_t)child_pa);

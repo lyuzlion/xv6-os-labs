@@ -113,7 +113,7 @@ allocproc(void)
 
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
-    if(p->state == UNUSED) {
+    if(p->state == UNUSED) { // 这段代码遍历所有进程，尝试找到一个未使用的进程结构体。如果找到了，则跳转到标签 found 继续执行；否则释放锁并继续查找。
       goto found;
     } else {
       release(&p->lock);
@@ -122,23 +122,24 @@ allocproc(void)
   return 0;
 
 found:
-  p->pid = allocpid();
+  p->pid = allocpid(); // 为新进程分配一个唯一的PID。
   p->state = USED;
 
   // M: we should alloc a page for the ususcall struct. 
-  if ((p->usyscall_page = (struct usyscall *)kalloc()) == 0) {
+  // M: map a read only page to USYSCALL
+  if ((p->shared_page_ptr = (struct usyscall *)kalloc()) == 0) { // 使用 kalloc 函数从内核内存池中分配一页内存给 shared_page_ptr。
     freeproc(p);
     release(&p->lock);
     return 0;
   }  
-  p->usyscall_page->pid = p->pid;
+  p->shared_page_ptr->pid = p->pid;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
     release(&p->lock);
     return 0;
-  }
+  } // 同样地，为陷阱帧页分配内存（有许多寄存器），如果失败则清理资源并返回错误。
 
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
@@ -164,10 +165,10 @@ static void
 freeproc(struct proc *p)
 {
 
-  // M: free the usyscall_page
-  if(p->usyscall_page)
-    kfree((void*)p->usyscall_page);
-  p->usyscall_page = 0;
+  // M: free the shared_page_ptr
+  if(p->shared_page_ptr)
+    kfree((void*)p->shared_page_ptr);
+  p->shared_page_ptr = 0;
 
   if(p->trapframe)
     kfree((void*)p->trapframe);
@@ -221,7 +222,8 @@ proc_pagetable(struct proc *p)
   }
 
   // M: the capacity page table is PGSIZE
-  if(mappages(pagetable, USYSCALL, PGSIZE, (uint64)p->usyscall_page, PTE_R | PTE_U) < 0){
+  // M: PTE_R and PTE_U means read and user accessible
+  if(mappages(pagetable, USYSCALL, PGSIZE, (uint64)p->shared_page_ptr, PTE_R | PTE_U) < 0){
     // uvmfree(pagetable, 0);
     // return 0;
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
@@ -241,6 +243,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  // M: free the usyscall page
   uvmunmap(pagetable, USYSCALL, 1, 0);
   uvmfree(pagetable, sz);
 }
