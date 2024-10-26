@@ -243,9 +243,12 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
-  // M: free the usyscall page
   uvmunmap(pagetable, USYSCALL, 1, 0);
   uvmfree(pagetable, sz);
+    // 第一次调用 uvmunmap(pagetable, TRAMPOLINE, 1, 0); 解除了从 TRAMPOLINE 开始的一个页面的映射。TRAMPOLINE 通常是指向一个特殊的代码段，用于处理系统调用返回等情况。
+    // 第二次调用 uvmunmap(pagetable, TRAPFRAME, 1, 0); 解除了从 TRAPFRAME 开始的一个页面的映射。TRAPFRAME 一般用来保存中断或异常发生时的处理器状态。
+    // 第三次调用 uvmunmap(pagetable, USYSCALL, 1, 0); 解除了从 USYSCALL 开始的一个页面的映射。USYSCALL 可能是指用户态系统调用入口点。
+    // 最后调用了 uvmfree(pagetable, sz); 来释放整个页表及其对应的物理内存。这里 sz 参数指定了需要释放的内存大小。
 }
 
 // a user program that calls exec("/init")
