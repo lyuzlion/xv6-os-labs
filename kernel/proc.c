@@ -531,8 +531,7 @@ forkret(void)
   usertrapret();
 }
 
-void
-sleep(void *chan, struct spinlock *lk)
+void sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
   
