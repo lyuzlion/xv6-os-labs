@@ -477,29 +477,39 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 
 static int depth = 0;
 
+// M: recursively print the page table
 void
-vmprint(pagetable_t pagetable) { 
+vmprint(pagetable_t pagetable) {
 
-  if (depth == 0) { // 如果这是最外层的页表（即 depth 为 0），则打印页表的地址。
+  // M: print the addr of pagetable
+  if (depth == 0) {
     printf("page table %p\n", (uint64)pagetable);
+    // printf("page table %p\n", pagetable);
   }
 
-
-  for (int i = 0; i < 512; ++i) { // 遍历当前页表的每一个页表项
+  // M: start from 0, skip the first pte
+  // M: 512 ptes in a page table
+  for (int i = 0; i < 512; ++i) {
 
     pte_t pte = pagetable[i];
 
+    // M: if the current pte is valid
     if (pte & PTE_V) {
       for (int j = 0; j <= depth; ++j) {
         printf("..");
       }
       printf("%d: pte %p pa %p\n", i, (uint64)pte, (uint64)PTE2PA(pte));
-      //如果页表条目有效，则打印该条目的索引、值以及对应的物理地址，并根据当前深度添加适当的缩进。
+      // printf("%d: pte %p pa %p\n", i, pte, PTE2PA(pte));
     }
 
+    // M: the pte is not R/W/X, and it is valid
+    // M: this means the pte points to a deeper level page table
     if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
-      depth++; //如果页表条目有效且没有读、写或执行权限（这通常意味着它指向一个更深层次的页表），则递归调用 vmprint 函数来打印子页表，并在返回后恢复深度。
+      depth++;
+
+      // M: get the physical address of the child page table
       uint64 child_pa = PTE2PA(pte);
+      // M: recursive call, to print the multi-level page table
       vmprint((pagetable_t)child_pa);
       depth--;
     }

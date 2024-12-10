@@ -81,32 +81,51 @@ sys_sleep(void)
 int
 sys_pgaccess(void)
 {
+  // lab pgtbl: your code here.
+
+  // M: the start address
+  // M: the number of pages
+  // M: the address of access bits
   uint64 va;
   int pagenum;
   uint64 abitsaddr;
 
-  argaddr(0, &va);// 获取起始虚拟地址
-  argint(1, &pagenum);// 获取页的数量
-  argaddr(2, &abitsaddr); // 获取存储访问位结果的地址
+  // M: get the three arguments
 
+  // M: get the start of virtual address
+  argaddr(0, &va);
+  // M: get the number of pages to check
+  argint(1, &pagenum);
+  // M: get the address of access bits
+  argaddr(2, &abitsaddr);
+
+  // M: maskbits is used to store the accessed bits
   uint64 maskbits = 0;
   struct proc *proc = myproc();
 
-  for (int i = 0; i < pagenum; i++) {  // 遍历每个页面
+  // M: we should check pagenum pages
+  for (int i = 0; i < pagenum; i++) {
 
-    pte_t *pte = walk(proc->pagetable, va+i*PGSIZE, 0); // 使用 walk 函数查找每个页面的页表条目。
+    // M: obtain the corresponding pte
+    pte_t *pte = walk(proc->pagetable, va+i*PGSIZE, 0);
 
-    if (pte == 0) // 如果页表条目不存在，触发错误并终止程序。
+    if (pte == 0)
       panic("[ERROR] sys_pagccess page not exist.");
 
-    if (PTE_FLAGS(*pte) & PTE_A) { // 检查访问位并设置掩码：
+    // M: PTE_FLAGS is used to get the flags of the pte
+    // M: if the page is accessed
+    if (PTE_FLAGS(*pte) & PTE_A) {
       maskbits = maskbits | (1L << i);
     }
-    *pte = ((*pte&PTE_A) ^ *pte) ^ 0 ; // 清除页表条目的访问位 PTE_A，以便下次检查时能够重新检测。
+
+    // clear PTE_A, set PTE_A bits zero
+    // M: so that we could check the accessed bits of the pages next time
+    *pte = ((*pte&PTE_A) ^ *pte) ^ 0 ;
   }
 
+  // M: copy the maskbits to the valuable whose address is abitsaddr in the user space
   if (copyout(proc->pagetable, abitsaddr, (char *)&maskbits, sizeof(maskbits)) < 0)
-    panic("[ERROR] sys_pgacess copyout error"); // 使用 copyout 函数将 maskbits 复制到用户空间的 abitsaddr 地址。
+    panic("[ERROR] sys_pgacess copyout error");
 
   return 0;
 }

@@ -113,7 +113,7 @@ allocproc(void)
 
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
-    if(p->state == UNUSED) { // 这段代码遍历所有进程，尝试找到一个未使用的进程结构体。如果找到了，则跳转到标签 found 继续执行；否则释放锁并继续查找。
+    if(p->state == UNUSED) {
       goto found;
     } else {
       release(&p->lock);
@@ -122,24 +122,24 @@ allocproc(void)
   return 0;
 
 found:
-  p->pid = allocpid(); // 为新进程分配一个唯一的PID。
+  p->pid = allocpid();
   p->state = USED;
 
   // M: we should alloc a page for the ususcall struct. 
   // M: map a read only page to USYSCALL
-  if ((p->shared_page_ptr = (struct usyscall *)kalloc()) == 0) { // 使用 kalloc 函数从内核内存池中分配一页内存给 shared_page_ptr。
+  if ((p->usyscall_page = (struct usyscall *)kalloc()) == 0) {
     freeproc(p);
     release(&p->lock);
     return 0;
   }  
-  p->shared_page_ptr->pid = p->pid; // 保存的是进程p的数据
+  p->usyscall_page->pid = p->pid;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
     release(&p->lock);
     return 0;
-  } // 同样地，为陷阱帧页分配内存（有许多寄存器），如果失败则清理资源并返回错误。
+  }
 
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
@@ -165,10 +165,10 @@ static void
 freeproc(struct proc *p)
 {
 
-  // M: free the shared_page_ptr
-  if(p->shared_page_ptr)
-    kfree((void*)p->shared_page_ptr);
-  p->shared_page_ptr = 0;
+  // M: free the usyscall_page
+  if(p->usyscall_page)
+    kfree((void*)p->usyscall_page);
+  p->usyscall_page = 0;
 
   if(p->trapframe)
     kfree((void*)p->trapframe);
@@ -197,7 +197,7 @@ proc_pagetable(struct proc *p)
 
   // An empty page table.
   // M: return the virtual address of page table
-  pagetable = uvmcreate(); // 调用 uvmcreate 创建一个新的空页表。如果创建失败，返回 0。
+  pagetable = uvmcreate();
   if(pagetable == 0)
     return 0;
 
@@ -209,7 +209,7 @@ proc_pagetable(struct proc *p)
   if(mappages(pagetable, TRAMPOLINE, PGSIZE,
               (uint64)trampoline, PTE_R | PTE_X) < 0){
     uvmfree(pagetable, 0);
-    return 0; // 使用 mappages 将陷阱代码映射到最高的用户虚拟地址 TRAMPOLINE。权限设置为只读和可执行 (PTE_R | PTE_X)。如果映射失败，释放页表并返回 0。
+    return 0;
   }
 
   // map the trapframe page just below the trampoline page, for
@@ -223,9 +223,9 @@ proc_pagetable(struct proc *p)
 
   // M: the capacity page table is PGSIZE
   // M: PTE_R and PTE_U means read and user accessible
-  if(mappages(pagetable, USYSCALL, PGSIZE, (uint64)p->shared_page_ptr, PTE_R | PTE_U) < 0){
-    // 使用 mappages 将用户系统调用页映射到 USYSCALL 地址。权限设置为可读和用户可访问 (PTE_R | PTE_U)。
-    // 如果映射失败，先解除陷阱代码页和陷阱帧页的映射，再释放页表并返回 0。
+  if(mappages(pagetable, USYSCALL, PGSIZE, (uint64)p->usyscall_page, PTE_R | PTE_U) < 0){
+    // uvmfree(pagetable, 0);
+    // return 0;
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
     uvmunmap(pagetable, TRAPFRAME, 1, 0);
     uvmfree(pagetable, 0);
@@ -243,12 +243,9 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  // M: free the usyscall page
   uvmunmap(pagetable, USYSCALL, 1, 0);
   uvmfree(pagetable, sz);
-    // 第一次调用 uvmunmap(pagetable, TRAMPOLINE, 1, 0); 解除了从 TRAMPOLINE 开始的一个页面的映射。TRAMPOLINE 通常是指向一个特殊的代码段，用于处理系统调用返回等情况。
-    // 第二次调用 uvmunmap(pagetable, TRAPFRAME, 1, 0); 解除了从 TRAPFRAME 开始的一个页面的映射。TRAPFRAME 一般用来保存中断或异常发生时的处理器状态。
-    // 第三次调用 uvmunmap(pagetable, USYSCALL, 1, 0); 解除了从 USYSCALL 开始的一个页面的映射。USYSCALL 可能是指用户态系统调用入口点。
-    // 最后调用了 uvmfree(pagetable, sz); 来释放整个页表及其对应的物理内存。这里 sz 参数指定了需要释放的内存大小。
 }
 
 // a user program that calls exec("/init")

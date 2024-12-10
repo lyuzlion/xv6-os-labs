@@ -106,5 +106,5 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
 
-  struct usyscall *shared_page_ptr; // User syscall page
+  struct usyscall *usyscall_page; // User syscall page
 };
