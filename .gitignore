@@ -11,7 +11,7 @@ entryother
 initcode
 initcode.out
 kernelmemfs
-mkfs
+mkfs/mkfs
 kernel/kernel
 user/usys.S
 .gdbinit
@@ -25,3 +25,4 @@ barrier
 .DS_Store
 *.dSYM
 *.pcap
+.vscode/
