@@ -146,6 +146,8 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  memset(&p->mmap_vmas, 0, sizeof(p->mmap_vmas));
+
   return p;
 }
 
@@ -288,6 +290,14 @@ fork(void)
     return -1;
   }
 
+  for (int i = 0; i < VMA_SIZE; i++){
+    if(p->mmap_vmas[i].in_use){
+      np->mmap_vmas[i] = p->mmap_vmas[i]; 
+      filedup(p->mmap_vmas[i].file);
+      // 复制 vma
+    }
+  }
+
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
@@ -295,9 +305,6 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
-
-  // copy trace mask value
-  np->mask = p->mask;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -353,6 +360,13 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+
+  // 释放和写回 mmap 数据需要在关闭文件之前
+  for(int i = 0; i < VMA_SIZE; i++){
+    if(p->mmap_vmas[i].in_use){
+      munmap((uint64)p->mmap_vmas[i].sta_addr, p->mmap_vmas[i].sz);
+    }
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
@@ -688,17 +702,4 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
-}
-
-
-// used by sysinfo
-int
-proc_not_unsed_num(void)
-{
-  int nproc = 0;
-  for (struct proc *p = proc; p < &proc[NPROC]; p++) {
-    if (p->state != UNUSED)
-      nproc++;
-  }
-  return nproc;
 }
