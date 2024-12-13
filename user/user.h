@@ -1,7 +1,3 @@
-#ifdef LAB_MMAP
-typedef unsigned long size_t;
-typedef long int off_t;
-#endif
 struct stat;
 
 // system calls
@@ -26,10 +22,6 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
-
-void* mmap(void *addr, uint64 length, int prot, int flags, int fd, uint64 offset);
-int munmap(void *addr, uint64 length);
-
 #ifdef LAB_NET
 int connect(uint32, uint16, uint16);
 #endif
@@ -55,6 +47,4 @@ void free(void*);
 int atoi(const char*);
 int memcmp(const void *, const void *, uint);
 void *memcpy(void *, const void *, uint);
-#ifdef LAB_LOCK
 int statistics(void*, int);
-#endif

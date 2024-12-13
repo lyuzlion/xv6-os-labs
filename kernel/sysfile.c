@@ -15,7 +15,6 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
-#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -478,7 +477,7 @@ sys_exec(void)
 uint64
 sys_pipe(void)
 {
-  uint64 fdarray;
+  uint64 fdarray; // user pointer to array of two integers
   struct file *rf, *wf;
   int fd0, fd1;
   struct proc *p = myproc();
@@ -505,121 +504,28 @@ sys_pipe(void)
   return 0;
 }
 
-#ifdef LAB_MMAP
-uint64
-sys_mmap() {
-  uint64 addr, length, offset; 
-  int prot, flags, fd;
-  struct file* file;
 
-  argaddr(0, &addr);
-  argaddr(1, &length);
-  argint(2, &prot);
-  argint(3, &flags);
-  argfd(4, &fd, &file);
-  argaddr(5, &offset);
+#ifdef LAB_NET
+int
+sys_connect(void)
+{
+  struct file *f;
+  int fd;
+  uint32 raddr;
+  uint32 rport;
+  uint32 lport;
 
-  struct proc* p = myproc();
+  argint(0, (int*)&raddr);
+  argint(1, (int*)&lport);
+  argint(2, (int*)&rport);
 
-  if (addr || offset) {
+  if(sockalloc(&f, raddr, lport, rport) < 0)
     return -1;
-  }
-  if (!file->writable && (prot & PROT_WRITE) && (flags & MAP_SHARED)) {
-    return -1;
-  }
-
-  int vma_index = -1;
-  uint64 vma_addr = get_mmap_space(length, p->mmap_vmas, &vma_index);
-
-  if (vma_addr == -1) {
-    return -1;
-  }
-  if (vma_addr <= p->sz) {
+  if((fd=fdalloc(f)) < 0){
+    fileclose(f);
     return -1;
   }
 
-  struct mmap_vma* vma = &p->mmap_vmas[vma_index];
-  vma->in_use = 1;
-  vma->sta_addr = vma_addr;
-  vma->sz = length;
-  vma->prot = prot;
-  vma->file = file;
-  vma->flags = flags;
-  filedup(file);
-
-  return vma->sta_addr;
+  return fd;
 }
-
-// in sysfile.c
-uint64
-get_mmap_space(uint64 sz, struct mmap_vma* vmas, int* free_idx){
-  *free_idx = -1;
-  
-  uint64 lowest_addr = TRAPFRAME;
-  
-  struct mmap_vma tmp; 
-  tmp.sta_addr = TRAPFRAME, tmp.sz = 0;
-
-  for(int i = 0; i <= VMA_SIZE; i++){
-    if(vmas[i].in_use == 0 && i != VMA_SIZE){
-      *free_idx = i;
-      continue;
-    } 
-    uint64 ed_pos = i != VMA_SIZE ? PGROUNDDOWN(vmas[i].sta_addr) 
-                                : tmp.sta_addr;
-
-    lowest_addr = ed_pos < lowest_addr ? ed_pos : lowest_addr;
-    
-    for(int j = 0; j < VMA_SIZE; j++){
-      if(vmas[j].in_use == 0 && i != VMA_SIZE) continue;
-
-      uint64 st_pos = i != VMA_SIZE ? vmas[j].sta_addr + vmas[j].sz 
-                                  : tmp.sta_addr + tmp.sz; 
-                                  
-      if (ed_pos <= st_pos) continue; 
-      if (ed_pos - st_pos >= sz){
-        return st_pos;
-      }
-    }
-  } 
-
-  return lowest_addr - sz;
-}
-
-// in sysfile.c
-uint64
-munmap(uint64 addr, uint64 len){
-  struct proc* p = myproc();
-  struct mmap_vma* cur_vma = get_vma_by_addr(addr);
-  if(!cur_vma)
-    return -1;
-
-  if(addr > cur_vma->sta_addr && addr + len < cur_vma->sta_addr + cur_vma->sz){
-    return -1;
-  }
-
-  mmap_writeback(p->pagetable, addr, len, cur_vma);
- 
-  if(addr == cur_vma->sta_addr){ 
-    cur_vma->sta_addr += len;
-  } 
-  cur_vma->sz -= len;
-  
-  if(cur_vma->sz <= 0){
-    fileclose(cur_vma->file);
-    cur_vma->in_use = 0;
-  }
-  return 0;  
-}
-
-uint64
-sys_munmap(){
-  // int munmap(void *addr, size_t length);
-  uint64 addr;
-  uint64 len;
-  argaddr(0, &addr);
-  argaddr(1, &len);
-  return munmap(addr, len);
-}
-
 #endif

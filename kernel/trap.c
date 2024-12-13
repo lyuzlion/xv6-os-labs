@@ -2,14 +2,8 @@
 #include "param.h"
 #include "memlayout.h"
 #include "riscv.h"
-// #include "spinlock.h"
 #include "spinlock.h"
-#include "sleeplock.h"
 #include "proc.h"
-#include "fs.h"
-#include "file.h"
-// #include "dbg_macros.h"
-#include "fcntl.h"
 #include "defs.h"
 
 struct spinlock tickslock;
@@ -43,7 +37,6 @@ void
 usertrap(void)
 {
   int which_dev = 0;
-  int bad = 0;
 
   if((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
@@ -74,20 +67,17 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else if ((r_scause() == 13 || r_scause() == 15)) {
-    mmap_fault_handler(r_stval());
   } else {
-    bad = 1;
-  }
 
-  if (bad) {
+    
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    setkilled(p); 
+    setkilled(p);
   }
 
   if(killed(p))
     exit(-1);
+  
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)
@@ -144,19 +134,28 @@ usertrapret(void)
 
 // interrupts and exceptions from kernel code go here via kernelvec,
 // on whatever the current kernel stack is.
+// M: handle the interrupt or exception
 void 
 kerneltrap()
 {
   int which_dev = 0;
-  uint64 sepc = r_sepc();
+  // M: read the sepc register, which contains the address of the instruction that caused the trap
+  uint64 sepc = r_sepc(); 
+  // M: read the sstatus register, which contains the current CPU's status
   uint64 sstatus = r_sstatus();
+  // M: read the scause register, which contains the cause of the trap
   uint64 scause = r_scause();
   
+  // M: check the trap whether from supervisor mode
+  // M: is not, panic
   if((sstatus & SSTATUS_SPP) == 0)
     panic("kerneltrap: not from supervisor mode");
+  // M: check the interrupt whether enabled
   if(intr_get() != 0)
     panic("kerneltrap: interrupts enabled");
 
+  // M: if which_dev equals 0, it means it is not a device interrupt
+  // M: it is a exception
   if((which_dev = devintr()) == 0){
     printf("scause %p\n", scause);
     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
@@ -164,6 +163,7 @@ kerneltrap()
   }
 
   // give up the CPU if this is a timer interrupt.
+  // M: if which_dev equals 2, it means it is a timer interrupt
   if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
     yield();
 
@@ -203,7 +203,13 @@ devintr()
       uartintr();
     } else if(irq == VIRTIO0_IRQ){
       virtio_disk_intr();
-    } else if(irq){
+    }
+#ifdef LAB_NET
+    else if(irq == E1000_IRQ){
+      e1000_intr();
+    }
+#endif
+    else if(irq){
       printf("unexpected interrupt irq=%d\n", irq);
     }
 
@@ -232,69 +238,3 @@ devintr()
   }
 }
 
-struct mmap_vma* 
-get_vma_by_addr(uint64 addr){
-  struct proc* p = myproc();
-  for(int i = 0; i < VMA_SIZE; i++){
-    if(p->mmap_vmas[i].in_use && addr >= p->mmap_vmas[i].sta_addr && addr < p->mmap_vmas[i].sta_addr + p->mmap_vmas[i].sz){
-      // 判断该地址是否在文件映射区的中间
-      return p->mmap_vmas + i;
-    }
-  }
-  return 0;
-}
-
-// in trap.c
-int 
-mmap_fault_handler(uint64 addr){
-  struct proc* p = myproc();
-  struct mmap_vma* cur_vma;
-  if((cur_vma = get_vma_by_addr(addr)) == 0){
-    // 找到这个地址属于哪个文件的映射
-    // 等于零说明不属于任何一个
-    return -1;
-  }
-
-  if(!cur_vma->file->readable && r_scause() == 13 && cur_vma->flags & MAP_SHARED){
-    // DEBUG("mmap_fault_handler: not readable\n");
-    return -1;
-  } // 读错误
-    
-  if(!cur_vma->file->writable && r_scause() == 15 && cur_vma->flags & MAP_SHARED){
-    // DEBUG("mmap_fault_handler: not writable\n");
-    return -1;
-  } // 写错误
-    
-
-  uint64 pg_sta = PGROUNDDOWN(addr);
-  // uint64 pa = kalloc();
-  uint64 pa = (uint64)kalloc();
-  if(!pa){
-    // DEBUG("mmap_fault_handler: kalloc failed\n");
-    return -1;
-  }
-
-  // memset(()pa, 0, PGSIZE);
-  memset((void*)pa, 0, PGSIZE);
-
-  int perm = PTE_U | PTE_V;
-  if(cur_vma->prot & PROT_READ) perm |= PTE_R;
-  if(cur_vma->prot & PROT_WRITE) perm |= PTE_W;
-  if(cur_vma->prot& PROT_EXEC) perm |= PTE_X;
-  // 在 mmap 的时候已经排除了不可能的情况了
-
-  uint64 off = PGROUNDDOWN(addr - cur_vma->sta_addr); 
-  // 这个 off 代表文件拷贝时要跳过多少个页帧
-
-  ilock(cur_vma->file->ip);
-  int rdret;
-  if((rdret = readi(cur_vma->file->ip, 0, pa, off, PGSIZE)) == 0){
-    iunlock(cur_vma->file->ip);
-    return -1;
-  }
-
-  iunlock(cur_vma->file->ip); // 没有 put 是这个文件之后还需要使用
-                              // 在 unmap 中应该可以 put
-  mappages(p->pagetable, pg_sta, PGSIZE, pa, perm);
-  return 0;
-}

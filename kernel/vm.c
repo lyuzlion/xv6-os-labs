@@ -4,15 +4,9 @@
 #include "elf.h"
 #include "riscv.h"
 #include "defs.h"
-#include "fs.h"
-// #include "spinlock.h"
 #include "spinlock.h"
 #include "proc.h"
-#include "fcntl.h"
-#include "sleeplock.h"
-#include "file.h"
-// #define FDEBUG
-// #include "dbg_macros.h"
+#include "fs.h"
 
 /*
  * the kernel's page table.
@@ -37,6 +31,14 @@ kvmmake(void)
 
   // virtio mmio disk interface
   kvmmap(kpgtbl, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+#ifdef LAB_NET
+  // PCI-E ECAM (configuration space), for pci.c
+  kvmmap(kpgtbl, 0x30000000L, 0x30000000L, 0x10000000, PTE_R | PTE_W);
+
+  // pci.c maps the e1000's registers here.
+  kvmmap(kpgtbl, 0x40000000L, 0x40000000L, 0x20000, PTE_R | PTE_W);
+#endif  
 
   // PLIC
   kvmmap(kpgtbl, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
@@ -144,9 +146,8 @@ kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 }
 
 // Create PTEs for virtual addresses starting at va that refer to
-// physical addresses starting at pa.
-// va and size MUST be page-aligned.
-// Returns 0 on success, -1 if walk() couldn't
+// physical addresses starting at pa. va and size might not
+// be page-aligned. Returns 0 on success, -1 if walk() couldn't
 // allocate a needed page-table page.
 int
 mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
@@ -154,17 +155,11 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   uint64 a, last;
   pte_t *pte;
 
-  if((va % PGSIZE) != 0)
-    panic("mappages: va not aligned");
-
-  if((size % PGSIZE) != 0)
-    panic("mappages: size not aligned");
-
   if(size == 0)
     panic("mappages: size");
   
-  a = va;
-  last = va + size - PGSIZE;
+  a = PGROUNDDOWN(va);
+  last = PGROUNDDOWN(va + size - 1);
   for(;;){
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
@@ -194,8 +189,10 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
       panic("uvmunmap: walk");
-    if((*pte & PTE_V) == 0)
+    if((*pte & PTE_V) == 0) {
+      printf("va=%p pte=%p\n", a, *pte);
       panic("uvmunmap: not mapped");
+    }
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -371,13 +368,21 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    if(va0 >= MAXVA)
+    if (va0 >= MAXVA)
       return -1;
-    pte = walk(pagetable, va0, 0);
-    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
-       (*pte & PTE_W) == 0)
+    if((pte = walk(pagetable, va0, 0)) == 0) {
+      // printf("copyout: pte should exist 0x%x %d\n", dstva, len);
       return -1;
-    pa0 = PTE2PA(*pte);
+    }
+
+
+    // forbid copyout over read-only user text pages.
+    if((*pte & PTE_W) == 0)
+      return -1;
+    
+    pa0 = walkaddr(pagetable, va0);
+    if(pa0 == 0)
+      return -1;
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
@@ -397,7 +402,7 @@ int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
   uint64 n, va0, pa0;
-
+  
   while(len > 0){
     va0 = PGROUNDDOWN(srcva);
     pa0 = walkaddr(pagetable, va0);
@@ -459,34 +464,4 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 }
 
 
-// #include "sleeplock.h"
-// #include "spinlock.h"
-// in vm.c
-int
-mmap_writeback(pagetable_t pt, uint64 src_va, uint64 len, struct mmap_vma* vma){
-// 把带脏位的页帧写回文件中，并且取消映射
-// 写回的是 src_va 开始的，长度为 len
-  uint64 a;
-  pte_t *pte;
-  for(a = PGROUNDDOWN(src_va); a < PGROUNDDOWN(src_va + len); a += PGSIZE){
-    if((pte = walk(pt, a, 0)) == 0){ 
-      panic("mmap_writeback: walk");
-    }
-    if(PTE_FLAGS(*pte) == PTE_V)
-      panic("mmap_writeback: not leaf");
-    if(!(*pte & PTE_V)) continue; // 懒分配
 
-    if((*pte & PTE_D) && (vma->flags & MAP_SHARED)){ 
-      // 写回
-      begin_op();
-      ilock(vma->file->ip);
-      uint64 copied_len = a - src_va;
-      writei(vma->file->ip, 1, a, copied_len, PGSIZE);
-      iunlock(vma->file->ip);
-      end_op();
-    }
-    kfree((void*)PTE2PA(*pte));
-    *pte = 0;
-  }
-  return 0;
-}
