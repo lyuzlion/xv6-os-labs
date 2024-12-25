@@ -5,6 +5,11 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
+// Just declare the variables from kernel/kalloc.c
+extern int useReference[PHYSTOP/PGSIZE];
+extern struct spinlock ref_count_lock;
 
 /*
  * the kernel's page table.
@@ -82,6 +87,7 @@ kvminithart()
 //   21..29 -- 9 bits of level-1 index.
 //   12..20 -- 9 bits of level-0 index.
 //    0..11 -- 12 bits of byte offset within the page.
+// M: if alloc == 0, we will only search and won't allocate a new page table page
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
@@ -309,26 +315,46 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // physical memory.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
+// M: copy a user page table from old to new
+// M: the fork() system call will call this function to copy the user page table
+// M: so we should implement the copy-on-write in this function
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  // char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
+
+    // M: walk is used to get the PTE of the virtual address
+    // M: it seems that we should have mapping for the whole memory?
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
+    
+    // M: we will only flag the writable page as COW page
+    // M: if it is read-only, we will copy the page directly
+    if (*pte & PTE_W) {
+      // set PTE_W to 0
+      *pte &= ~PTE_W;
+      // set PTE_RSW to 1
+      // set COW page
+      *pte |= PTE_RSW;
+    }
     pa = PTE2PA(*pte);
+
+    // M: record the reference count of the physical page
+    acquire(&ref_count_lock);
+    useReference[pa/PGSIZE] += 1;
+    release(&ref_count_lock);
+
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+
+    // M: map the page to the new page table
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
       goto err;
     }
   }
@@ -352,6 +378,12 @@ uvmclear(pagetable_t pagetable, uint64 va)
   *pte &= ~PTE_U;
 }
 
+int checkcowpage(uint64 va, pte_t *pte, struct proc* p) {
+  return (va < p->sz) // va should blow the size of process memory (bytes)
+    && (*pte & PTE_V) 
+    && (*pte & PTE_RSW); // pte is COW page
+}
+
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
@@ -359,17 +391,35 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
-  pte_t *pte;
+  // pte_t *pte;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
     if(va0 >= MAXVA)
       return -1;
-    pte = walk(pagetable, va0, 0);
-    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
-       (*pte & PTE_W) == 0)
+    pa0 = walkaddr(pagetable, va0);
+    if(pa0 == 0)
       return -1;
-    pa0 = PTE2PA(*pte);
+
+    struct proc *p = myproc();
+    pte_t *pte = walk(pagetable, va0, 0);
+    if (*pte == 0)
+      p->killed = 1;
+
+    if (checkcowpage(va0, pte, p)) 
+    {
+      char *mem;
+      if ((mem = kalloc()) == 0) {
+        p->killed = 1;
+      }else {
+        memmove(mem, (char*)pa0, PGSIZE);
+        uint flags = PTE_FLAGS(*pte);
+        uvmunmap(pagetable, va0, 1, 1);
+        *pte = (PA2PTE(mem) | flags | PTE_W);
+        *pte &= ~PTE_RSW;
+        pa0 = (uint64)mem;
+      }
+    }
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
