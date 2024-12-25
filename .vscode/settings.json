@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "random": "c",
+        "algorithm": "c"
+    },
+    "makefile.configureOnOpen": false
+}

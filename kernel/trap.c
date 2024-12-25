@@ -29,37 +29,6 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
-// M: copy-on-write handler
-int
-cowhandler(pagetable_t pagetable, uint64 va)
-{
-    char *mem;
-    if (va >= MAXVA)
-      return -1;
-
-    pte_t *pte = walk(pagetable, va, 0);
-    if (pte == 0)
-      return -1;
-
-    if ((*pte & PTE_RSW) == 0 || (*pte & PTE_U) == 0 || (*pte & PTE_V) == 0) {
-      return -1;
-    }
-    
-    if ((mem = kalloc()) == 0) {
-      return -1;
-    }
-
-    uint64 pa = PTE2PA(*pte);
-
-    memmove((char*)mem, (char*)pa, PGSIZE);
-
-    kfree((void*)pa);
-    uint flags = PTE_FLAGS(*pte);
-    *pte = (PA2PTE(mem) | flags | PTE_W);
-    *pte &= ~PTE_RSW;
-    return 0;
-}
-
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -72,33 +41,32 @@ usertrap(void)
   if((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
 
+  // send interrupts and exceptions to kerneltrap(),
+  // since we're now in the kernel.
   w_stvec((uint64)kernelvec);
 
   struct proc *p = myproc();
   
+  // save user program counter.
   p->trapframe->epc = r_sepc();
   
   if(r_scause() == 8){
+    // system call
 
     if(killed(p))
       exit(-1);
 
+    // sepc points to the ecall instruction,
+    // but we want to return to the next instruction.
     p->trapframe->epc += 4;
 
+    // an interrupt will change sepc, scause, and sstatus,
+    // so enable only now that we're done with those registers.
     intr_on();
 
     syscall();
-  } else if (r_scause() == 15) {
-    uint64 va = r_stval();
-
-    if (va >= p->sz)
-      p->killed = 1;
-
-    int ret = cowhandler(p->pagetable, va);
-
-    if (ret != 0)
-      p->killed = 1;
   } else if((which_dev = devintr()) != 0){
+    // ok
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
@@ -108,6 +76,7 @@ usertrap(void)
   if(killed(p))
     exit(-1);
 
+  // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)
     yield();
 

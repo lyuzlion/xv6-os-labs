@@ -242,6 +242,7 @@ bad:
   return -1;
 }
 
+// M: create a inode with the given type, major and minor
 static struct inode*
 create(char *path, short type, short major, short minor)
 {
@@ -339,6 +340,36 @@ sys_open(void)
     iunlockput(ip);
     end_op();
     return -1;
+  }
+
+  // handle the case of opening a symbolic link
+  if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {
+    // M: the maximum depth is defined in fs.h
+    // M: a symlink can also be a target of another symlink
+    for(int i = 0; i < MAX_SYMLINK_DEPTH; ++i) {
+      // M: read the content of the symlink
+      if(readi(ip, 0, (uint64)path, 0, MAXPATH) != MAXPATH) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      iunlockput(ip);
+      // M: get the inode of the target file
+      ip = namei(path);
+      if(ip == 0) {
+        end_op();
+        return -1;
+      }
+      ilock(ip);
+      if(ip->type != T_SYMLINK)
+        break;
+    }
+    // M: if the symlink is too deep, return error
+    if(ip->type == T_SYMLINK) {
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
   }
 
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
@@ -501,5 +532,42 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+// M: add the system call for symbolic link
+uint64
+sys_symlink(void) {
+  char target[MAXPATH], path[MAXPATH];
+  struct inode* ip;
+
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0) {
+    return -1;
+  }
+
+  // M: start a file system operation
+  // M: called at the start of each FS system call.
+  begin_op();
+  
+  // M: create a symbolic link inode in the path position
+  // M: we will return a locked inode here
+  ip = create(path, T_SYMLINK, 0, 0);
+  if(ip == 0) {
+    // M: if the creating is failed, return -1
+    end_op();
+    return -1;
+  }
+  
+  // M: write the target path to the inode
+  if(writei(ip, 0, (uint64)target, 0, MAXPATH) < MAXPATH) {
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+
+  // M: unlock the inode and end the operation
+  // M: the locked ip is returned by the create function above
+  iunlockput(ip);
+  end_op();
   return 0;
 }
